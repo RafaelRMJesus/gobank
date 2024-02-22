@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/mux"
 )
@@ -25,6 +26,7 @@ func (s *APIServer) Run() {
 	router := mux.NewRouter()
 	router.HandleFunc("/account", makeHTTPHandleFunc(s.handleAccount))
 	router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleGetAccountById))
+	router.HandleFunc("/transfer", makeHTTPHandleFunc(s.handleTransfer))
 
 	log.Println("JSON API Server running on port:", s.listenAddr)
 
@@ -51,9 +53,30 @@ func (s *APIServer) handleGetAccounts(w http.ResponseWriter, r *http.Request) er
 }
 
 func (s *APIServer) handleGetAccountById(w http.ResponseWriter, r *http.Request) error {
-	id := mux.Vars(r)["id"]
-	fmt.Println(id)
-	return WriteJSON(w, http.StatusOK, &Account{})
+
+	if r.Method == "GET" {
+		id, err := getID(r)
+		if err != nil {
+			return err
+		}
+		account, err := s.store.GetAccountById(id)
+		if err != nil {
+			return err
+		}
+		return WriteJSON(w, http.StatusOK, account)
+	}
+
+	if r.Method == "DELETE" {
+		id, err := getID(r)
+		if err != nil {
+			return err
+		}
+		if err := s.store.DeleteAccount(id); err != nil {
+			return err
+		}
+		return WriteJSON(w, http.StatusOK, map[string]int{"deleted": id})
+	}
+	return fmt.Errorf("invalid method %s", r.Method)
 }
 
 func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) error {
@@ -66,11 +89,6 @@ func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) 
 		return err
 	}
 	return WriteJSON(w, http.StatusOK, account)
-}
-
-func (s *APIServer) handleDeleteAccount(w http.ResponseWriter, r *http.Request) error {
-
-	return nil
 }
 
 func (s *APIServer) handleTransfer(w http.ResponseWriter, r *http.Request) error {
@@ -87,7 +105,7 @@ func WriteJSON(w http.ResponseWriter, status int, v any) error {
 type APIFunc func(http.ResponseWriter, *http.Request) error
 
 type APIError struct {
-	Error string
+	Error string `json:"error"`
 }
 
 func makeHTTPHandleFunc(f APIFunc) http.HandlerFunc {
@@ -96,4 +114,13 @@ func makeHTTPHandleFunc(f APIFunc) http.HandlerFunc {
 			WriteJSON(w, http.StatusBadRequest, APIError{Error: err.Error()})
 		}
 	}
+}
+
+func getID(r *http.Request) (int, error) {
+	idStr := mux.Vars(r)["id"]
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		return id, fmt.Errorf(`invalid Id given '%s'`, idStr)
+	}
+	return id, nil
 }
