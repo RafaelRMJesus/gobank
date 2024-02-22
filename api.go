@@ -37,7 +37,11 @@ func makeHTTPHandleFunc(f APIFunc) http.HandlerFunc {
 	}
 }
 
-func withJWTAuth(handlerFunc http.HandlerFunc) http.HandlerFunc {
+func invalidToken(w http.ResponseWriter) {
+	WriteJSON(w, http.StatusForbidden, APIError{Error: "invalid token"})
+}
+
+func withJWTAuth(handlerFunc http.HandlerFunc, s Storage) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("calling JWT auth middleware")
@@ -45,12 +49,32 @@ func withJWTAuth(handlerFunc http.HandlerFunc) http.HandlerFunc {
 
 		token, err := validateJWT(tokenStr)
 		if err != nil {
-			WriteJSON(w, http.StatusForbidden, APIError{Error: "invalid token"})
+			invalidToken(w)
+			return
+		}
+
+		if !token.Valid {
+			invalidToken(w)
+			return
+		}
+
+		userId, err := getID(r)
+		if err != nil {
+			invalidToken(w)
+			return
+		}
+
+		account, err := s.GetAccountById(userId)
+		if err != nil {
+			invalidToken(w)
 			return
 		}
 
 		claims := token.Claims.(jwt.MapClaims)
-		fmt.Println(claims)
+		if account.Number != int64(claims["accountNumber"].(float64)) {
+			invalidToken(w)
+			return
+		}
 
 		handlerFunc(w, r)
 	}
@@ -97,7 +121,7 @@ func NewApiServer(listenAddr string, store Storage) *APIServer {
 func (s *APIServer) Run() {
 	router := mux.NewRouter()
 	router.HandleFunc("/account", makeHTTPHandleFunc(s.handleAccount))
-	router.HandleFunc("/account/{id}", withJWTAuth(makeHTTPHandleFunc(s.handleGetAccountById)))
+	router.HandleFunc("/account/{id}", withJWTAuth(makeHTTPHandleFunc(s.handleGetAccountById), s.store))
 	router.HandleFunc("/transfer", makeHTTPHandleFunc(s.handleTransfer))
 
 	log.Println("JSON API Server running on port:", s.listenAddr)
